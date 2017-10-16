@@ -38,11 +38,16 @@ Hol_datatype
         | SEQ    of GCL => GCL
         | ASG    of string => 'expr
         | IFTHENELSE of 'pred => GCL => GCL
+	(* <<< (d): PERM type addition >>> *)
 	| PERM   of GCL => GCL
-	| FOR    of 'pred => GCL => 'pred => GCL => GCL
+	(* <<< (e): WHILE type addition >>> *)
+	| WHILE  of 'pred => 'pred => GCL
    ` ;
-   
-val SEQS_def   = Define `(SEQS [] = SKIP) /\ (SEQS (S1::rest) = SEQ S1 (SEQS rest))` ;  (* "::" is a list cons-operator *)
+
+(* <<< (e): FOR macro >>> *)
+val FOR_def = Define `FOR inv init g incr body = SEQ init (WHILE inv g (SEQ body incr))`;
+
+val SEQS_def   = Define `(SEQS [] = SKIP) /\ (SEQS (S1::rest) = SEQ S1 (SEQS rest))`;
 
 (* an example of how the program:
          assume x>y ;
@@ -83,12 +88,11 @@ val VALID_def = Define  `VALID p = (!s. p s)` ;
         
 (* Defining the semantic of GCL statements : *)
 
+(* <<< (e): Loop iteration semantics >>> *)
 val iter_def = Define
-    `(iter g body incr 0 s t = ~g s /\ (t=s))
+    `(iter g body 0 s t = ~g s /\ (t=s))
       /\
-     (iter g body incr (SUC k) s t =
-      (g s /\ (?s' s''. body s s' /\ incr s' s'' /\ iter g body incr k s'' t))
-     )
+     (iter g body (SUC k) s t = (g s /\ (?s'. body s s' /\ iter g body k s' t)))
     `;
 
 val exec_def = Define 
@@ -102,64 +106,15 @@ val exec_def = Define
          /\
         (exec (IFTHENELSE g S1 S2) s t = (g s /\ exec S1 s t) \/ (~g s /\ exec S2 s t))
 	 /\
+	(* <<< (d): PERM semantics >>> *)
 	(exec (PERM S1 S2) s t = (exec S1 s t \/ exec S2 s t))
 	 /\
-	(exec (FOR inv init g incr body) s t =
-	  ?s' k. exec init s s' /\ iter g (exec body) (exec incr) k s' t)
+	(* <<< (e): WHILE semantics >>> *)
+	(exec (WHILE inv g body) s t = ?k. iter g (exec body) k s t)
        `;
 
 (* Defining the concept of Hoare triples:  *)
 val HOARE_def = Define `HOARE gcl p q = (!s t. p s /\ exec gcl s t ==> q t)` ;
-
-val HOARE_loop_thm1 = prove
-    (--`!inv init g incr body.
-     HOARE (FOR inv init g incr body) (wlp init (AND (NOT g) q)) q`--,
-     RW_TAC std_ss [HOARE_def, exec_def, iter_def, AND_def, NOT_def]
-     THEN Induct_on `k`
-     THENL
-     [ ALL_TAC
-       RW_TAC std_ss [iter_def]
-
-     , ALL_TAC
-     ]
-
-
-     REWRITE_TAC [HOARE_def, AND_def, NOT_def, exec_def, iter_def]
-     THEN BETA_TAC
-     THEN REPEAT STRIP_TAC
-     THEN Induct_on `k`
-     THENL
-     [ ALL_TAC
-       REWRITE_TAC [iter_def]
-       PROVE_TAC []
-       RW_TAC std_ss []
-     , ALL_TAC
-     ]
-     THEN RW_TAC std_ss [iter_def]
-     THEN PROVE_TAC []
-    );
-
-val HOARE_loop_lemma1 = prove
-    (--`!body inv g init incr.
-    	     HOARE body (AND inv g) inv ==> HOARE (FOR inv init g incr body) inv (AND inv (NOT g))
-    `--,    
-     REWRITE_TAC [HOARE_def, AND_def, NOT_def, exec_def, iter_def]
-     THEN BETA_TAC
-     THEN NTAC 7 STRIP_TAC
-     THEN NTAC 2 (FIRST_ASSUM (UNDISCH_TAC o concl))
-     THEN SPEC_TAC (--`s : string -> 'a`--, --`s : string -> 'a`--)
-     THEN SPEC_TAC (--`t : string -> 'a`--, --`t : string -> 'a`--)
-     THEN Induct_on `k`
-     THENL
-     [ (* Base *)
-       REWRITE_TAC [iter_def]
-       THEN PROVE_TAC []
-     , (* Step *)
-       REWRITE_TAC [iter_def]
-       THEN NTAC 3 STRIP_TAC
-       THEN PROVE_TAC []
-     ]
-    );
 
 (* Defining how to calculate wlp over our GCL: *)
 val wlp_def = Define 
@@ -173,14 +128,14 @@ val wlp_def = Define
          /\
         (wlp (IFTHENELSE g S1 S2) q = AND (IMP g (wlp S1 q))  (IMP (NOT g) (wlp S2 q)))
 	 /\
+	(* <<< (d): PERM wlp >>> *)
 	(wlp (PERM S1 S2) q = AND (wlp S1 q) (wlp S2 q))
 	 /\
-	(wlp (FOR inv init g incr body) q =
-	  if ((q = AND inv (NOT g)) /\ HOARE (SEQ body incr) (AND inv g) inv) then
-	    wlp init inv
-	  else
-	    wlp init (AND (NOT g) q)
-	)
+	(* <<< (e): WHILE semantics >>> *)
+        (wlp (WHILE inv g body) q =
+          if ((q = AND inv (NOT g)) /\ HOARE body (AND inv g) inv) then
+            inv
+          else (AND (NOT g) q))
         ` ;
 (* ========================================================================== 
    SECTION 3: provides proofs of some basic laws of Hoare triples
@@ -215,26 +170,14 @@ val HOARE_ifthenelse_thm = prove
     THEN PROVE_TAC[]
    ) ;
 
-val HOARE_perm_thm = prove
-   (--`HOARE S1 p q /\ HOARE S2 p q ==> HOARE (PERM S1 S2) p q`--,
-    RW_TAC std_ss [HOARE_def, exec_def]
-    THEN PROVE_TAC[]
-   ) ;
-
-(* a tactic to undischarge all assumptions *)
-val UNDISCH_ALL_TAC = EVERY_ASSUM (fn th => UNDISCH_TAC (concl th)) ;
-
-val lemma = prove(--`p ==> q ==> r  = (p /\ q) ==> r`--, PROVE_TAC []) ;
-
-
-(** SOLUTION (b) **)
+(* <<< (b): HOARE composition law >>> *)
 val HOARE_composition_thm = prove
   (--`!S P1 P2 Q1 Q2. (HOARE S P1 Q1 /\ HOARE S P2 Q2) ==> (HOARE S (AND P1 P2) (AND Q1 Q2) /\ HOARE S (OR P1 P2) (OR Q1 Q2))`--,
     RW_TAC std_ss [HOARE_def, OR_def, AND_def, exec_def]
     THEN PROVE_TAC []
   );
 
-(** SOLUTION (c) **)
+(* <<< (c): Refinement >>> *)
 val REFINE_def = Define `REFINE S1 S2 = (!P Q. HOARE S1 P Q ==> HOARE S2 P Q)`;
 
 val REFINE_thm = prove
@@ -243,6 +186,66 @@ val REFINE_thm = prove
     THEN PROVE_TAC []
   );
 
+(* <<< (d): PERM helper >>> *)
+val HOARE_perm_thm = prove
+   (--`HOARE S1 p q /\ HOARE S2 p q ==> HOARE (PERM S1 S2) p q`--,
+    RW_TAC std_ss [HOARE_def, exec_def]
+    THEN PROVE_TAC[]
+   ) ;
+
+(* <<< (e): Loop helpers >>> *)
+val HOARE_loop_thm1 = prove
+    (--`!inv g body. HOARE (WHILE inv g body) (AND (NOT g) q) q`--,
+     REWRITE_TAC [HOARE_def, AND_def, NOT_def, exec_def, iter_def]
+     THEN BETA_TAC
+     THEN REPEAT STRIP_TAC
+     THEN Induct_on `k`
+     THEN REWRITE_TAC [iter_def]
+     THEN PROVE_TAC []
+    );
+
+val HOARE_loop_lemma1 = prove
+    (--`!inv g body.
+    	     HOARE body (AND inv g) inv ==> HOARE (WHILE inv g body) inv (AND inv (NOT g))
+    `--,    
+     REWRITE_TAC [HOARE_def, AND_def, NOT_def, exec_def, iter_def]
+     THEN BETA_TAC
+     THEN NTAC 7 STRIP_TAC
+     THEN NTAC 2 (FIRST_ASSUM (UNDISCH_TAC o concl))
+     THEN SPEC_TAC (--`s : string -> 'a`--, --`s : string -> 'a`--)
+     THEN Induct_on `k`
+     THENL
+     [ (* Base *)
+       REWRITE_TAC [iter_def]
+       THEN PROVE_TAC []
+     , (* Step *)
+       REWRITE_TAC [iter_def]
+       THEN NTAC 3 STRIP_TAC
+       THEN PROVE_TAC []
+     ]
+    );
+
+(* <<< (f): Law disapproval >>> *)
+val HOARE_law_counter_example = prove
+  (--`?P1 P2 Q1 Q2 (stmt :((string -> int) -> int, (string -> int) -> bool) GCL).
+        HOARE stmt P1 Q1 /\ HOARE stmt P2 Q2 ==> ~ HOARE stmt (OR P1 P2) (AND Q1 Q2)
+  `--,  
+    EXISTS_TAC	    (--`(\s. s "x" = 0)`--)
+    THEN EXISTS_TAC (--`(\s. s "x" = 1)`--)
+    THEN EXISTS_TAC (--`(\s. s "x" = 1)`--)
+    THEN EXISTS_TAC (--`(\s. s "x" = 2)`--)
+    THEN EXISTS_TAC (--`(ASG "x" (\s. s "x" + 1)
+    	 	    	:((string -> int) -> int, (string -> int) -> bool) GCL)
+    		    `--)
+    THEN RW_TAC std_ss [HOARE_def, OR_def, AND_def, exec_def]
+    THEN EXISTS_TAC (--`(\v. 0) : (string -> int)`--)
+    THEN EVAL_TAC
+  );
+
+(* a tactic to undischarge all assumptions *)
+val UNDISCH_ALL_TAC = EVERY_ASSUM (fn th => UNDISCH_TAC (concl th)) ;
+
+val lemma = prove(--`p ==> q ==> r  = (p /\ q) ==> r`--, PROVE_TAC []) ;
  
 (* ========================================================================== 
    SECTION 4:
@@ -319,14 +322,19 @@ val SOUND_wlp_thm = prove
         THEN RW_TAC std_ss [VALID_def, AND_def, IMP_def, NOT_def]
       ],
 
-      (* PERM *)
+      (* <<< (d): PERM wlp soundness >>> *)
       STRIP_TAC
       THEN MATCH_MP_TAC (GEN_ALL HOARE_perm_thm)
       THEN RW_TAC std_ss [wlp_def]
       THEN MATCH_MP_TAC (GEN_ALL HOARE_precond_strengthening_thm)
       THENL [ EXISTS_TAC (--`wlp gcl q`--), EXISTS_TAC (--`wlp gcl' q`--) ]
       THEN RW_TAC std_ss [VALID_def, IMP_def, AND_def]
-      THEN PROVE_TAC []
+      THEN PROVE_TAC [],
+
+      (* <<< (e): WHILE wlp soundness >>> *)
+      REWRITE_TAC [wlp_def]
+      THEN REPEAT STRIP_TAC
+      THEN RW_TAC std_ss [HOARE_loop_lemma1, HOARE_loop_thm1]
     ]
   ) ;
 
@@ -366,10 +374,10 @@ val example1_thm = prove
     THEN PROVE_TAC [lemma]
    ) ;
 
-(** SOLUTION (a) **)
-val min_def = Define `min = IFTHENELSE (\s. s "x" > s "y") (ASG "x" (\s. s "y")) val`;
+(* <<< (a): min(x,y) example >>> *)
+val min_def = Define `min = IFTHENELSE (\s. s "x" > s "y") (ASG "x" (\s. s "y")) SKIP`;
 
-SKIP min_thm = prove
+val min_thm = prove
   (--`HOARE min (\s. (s "x" = X) /\ (s "y" = Y)) (\s. ((s "x" = X) \/ (s "x" = Y)) /\ (s "x" <= X) /\ (s "x" <= Y))`--,
     REWRITE_TAC [min_def, HOARE_def, exec_def]
     THEN NTAC 2 (BETA_TAC THEN RW_TAC std_ss [])
