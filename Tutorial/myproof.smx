@@ -1,0 +1,8 @@
+load "intLib";
+open intLib;
+
+val foo2_def = Define `foo2 x = x + 10`;
+val foo2_thm = prove(--`foo2 x > x`--,
+    REWRITE_TAC [foo2_def]
+    THEN COOPER_TAC );
+

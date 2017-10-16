@@ -1,0 +1,34 @@
+THEORY_AND_PARENTS
+"test" 1506931498 343449
+["indexedLists" 1505310282 464950, "patternMatches" 1505310304 327572]
+
+INCORPORATE_TYPES
+[]
+
+IDS
+["min" "fun", "min" "bool", "bool" "!", "min" "=", "bool" "?"]
+
+TYPES
+[TYOP 1, TYV "'b", TYOP 0 1 0, TYV "'a", TYOP 0 3 2, TYOP 0 3 1,
+ TYOP 0 3 0, TYOP 0 6 0, TYOP 0 4 0, TYOP 0 8 0, TYOP 0 0 0, TYOP 0 0 10,
+ TYOP 0 2 0, TYOP 0 5 0, TYOP 0 13 0]
+
+INCORPORATE_CONSTS
+[]
+
+TERMS
+[TMV "P" 4, TMV "f" 5, TMV "x" 3, TMV "y" 1, TMC 2 7, TMC 2 9, TMC 3 11,
+ TMC 4 12, TMC 4 14]
+
+THEOREMS
+"SKOLEM_AGAIN"
+["test", 0, "bool", 145]
+["DISK_THM"]
+["%5%0%6%4%2%7%3$2$1@$0@|@|@2%8%1%4%2$2$0@$1$0@2|@|@2|@"]
+
+CLASSES
+["SKOLEM_AGAIN" Thm]
+
+LOADABLE_THYDATA
+[]
+

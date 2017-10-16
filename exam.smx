@@ -1,0 +1,377 @@
+(* turning off unicode *)
+(* set_trace "Unicode" 0; *)
+
+(* NOTEs: 
+
+   (1) Do NOT used S,K,I,inv as the name of your variables, because these 
+   names are already bind to some constants. To check if a name is bound
+   to a constant do for example:
+   
+      is_const (--`K`--) ;
+
+  (2) "=" has low priority in HOL. So, write for example (--`(x=y) /\ q`--)
+  
+  (3) Other utility functions that may be useful:
+
+      use "filename"       ;   --> run the script filename
+      type_of (--`f x`--)  ;   --> check the HOL-type of the given HOL-term 
+*)      
+       
+(* ========================================================================== 
+   SECTION 1: defines the embedding of GCL
+   ========================================================================== *)
+   
+(* pre-loading some libraries *)
+load "intLib" ;
+open intLib ;
+load "stringLib" ;
+open stringLib ;
+load "stringSimps" ;
+open stringSimps ;
+
+(* An embedding of a sublanguage of GCL, consisting of skip,assert,assume,
+   assignment, box, and sequential composition. *)
+
+Hol_datatype 
+   `GCL = SKIP
+        | ASSUME of 'pred
+        | SEQ    of GCL => GCL
+        | ASG    of string => 'expr
+        | IFTHENELSE of 'pred => GCL => GCL
+	| PERM   of GCL => GCL
+	| FOR    of 'pred => GCL => 'pred => GCL => GCL
+   ` ;
+   
+val SEQS_def   = Define `(SEQS [] = SKIP) /\ (SEQS (S1::rest) = SEQ S1 (SEQS rest))` ;  (* "::" is a list cons-operator *)
+
+(* an example of how the program:
+         assume x>y ;
+         x := x+1 ;
+         y := y+1 
+   looks like in our HOL embedding:
+*)
+   
+val example1_def = Define `
+    example1 =
+    SEQS [
+       ASSUME  (\s. s "x" > s "y") ;
+       ASG "x" (\s. s "x" + 1)     ;
+       ASG "y" (\s. s "y" + 1)     
+    ]
+    ` ;
+    (* a concrete list is writen as --`[1;2;3]`--  ,so with ";" as the sepataor *)
+   
+(* Notice that above, expressions and state predicates are represented as functions 
+   from states to values (boolean, in the case of predicates). Below are boolean 
+   operators, lifted to the function level.   
+*)
+
+val TT_def  = Define `TT = (\s. T)` ;
+val NOT_def = Define `NOT g = (\s. ~g s)` ;
+val IMP_def = Define `IMP p q = (\s. p s ==> q s)` ;
+val AND_def = Define `AND p q = (\s. p s /\ q s)` ;
+val OR_def = Define `OR p q = (\s. p s \/ q s)` ;
+
+(* a state-predicate is said to be valid, if it holds on every state *)
+
+val VALID_def = Define  `VALID p = (!s. p s)` ;
+
+(* ========================================================================== 
+  SECTION 2: defines the semantic of GCL, and definitions for Hoare triple
+             and wlp.
+   ========================================================================== *)
+        
+(* Defining the semantic of GCL statements : *)
+
+val iter_def = Define
+    `(iter g body incr 0 s t = ~g s /\ (t=s))
+      /\
+     (iter g body incr (SUC k) s t =
+      (g s /\ (?s' s''. body s s' /\ incr s' s'' /\ iter g body incr k s'' t))
+     )
+    `;
+
+val exec_def = Define 
+       `(exec SKIP s t = (s=t))
+         /\
+        (exec (ASSUME p) s t = p s /\ (s=t))
+         /\
+        (exec (SEQ S1 S2) s u = (?t. exec S1 s t /\ exec S2 t u))
+         /\
+        (exec (ASG v e) s t = (t = (\var. if var=v then e s else s var)))
+         /\
+        (exec (IFTHENELSE g S1 S2) s t = (g s /\ exec S1 s t) \/ (~g s /\ exec S2 s t))
+	 /\
+	(exec (PERM S1 S2) s t = (exec S1 s t \/ exec S2 s t))
+	 /\
+	(exec (FOR inv init g incr body) s t =
+	  ?s' k. exec init s s' /\ iter g (exec body) (exec incr) k s' t)
+       `;
+
+(* Defining the concept of Hoare triples:  *)
+val HOARE_def = Define `HOARE gcl p q = (!s t. p s /\ exec gcl s t ==> q t)` ;
+
+val HOARE_loop_thm1 = prove
+    (--`!inv init g incr body.
+     HOARE (FOR inv init g incr body) (wlp init (AND (NOT g) q)) q`--,
+     RW_TAC std_ss [HOARE_def, exec_def, iter_def, AND_def, NOT_def]
+     THEN Induct_on `k`
+     THENL
+     [ ALL_TAC
+       RW_TAC std_ss [iter_def]
+
+     , ALL_TAC
+     ]
+
+
+     REWRITE_TAC [HOARE_def, AND_def, NOT_def, exec_def, iter_def]
+     THEN BETA_TAC
+     THEN REPEAT STRIP_TAC
+     THEN Induct_on `k`
+     THENL
+     [ ALL_TAC
+       REWRITE_TAC [iter_def]
+       PROVE_TAC []
+       RW_TAC std_ss []
+     , ALL_TAC
+     ]
+     THEN RW_TAC std_ss [iter_def]
+     THEN PROVE_TAC []
+    );
+
+val HOARE_loop_lemma1 = prove
+    (--`!body inv g init incr.
+    	     HOARE body (AND inv g) inv ==> HOARE (FOR inv init g incr body) inv (AND inv (NOT g))
+    `--,    
+     REWRITE_TAC [HOARE_def, AND_def, NOT_def, exec_def, iter_def]
+     THEN BETA_TAC
+     THEN NTAC 7 STRIP_TAC
+     THEN NTAC 2 (FIRST_ASSUM (UNDISCH_TAC o concl))
+     THEN SPEC_TAC (--`s : string -> 'a`--, --`s : string -> 'a`--)
+     THEN SPEC_TAC (--`t : string -> 'a`--, --`t : string -> 'a`--)
+     THEN Induct_on `k`
+     THENL
+     [ (* Base *)
+       REWRITE_TAC [iter_def]
+       THEN PROVE_TAC []
+     , (* Step *)
+       REWRITE_TAC [iter_def]
+       THEN NTAC 3 STRIP_TAC
+       THEN PROVE_TAC []
+     ]
+    );
+
+(* Defining how to calculate wlp over our GCL: *)
+val wlp_def = Define 
+       `(wlp SKIP q = q)
+         /\
+        (wlp (ASSUME p) q  = (\s. p s ==> q s))
+         /\
+        (wlp (SEQ S1 S2) q = wlp S1 (wlp S2 q))
+         /\
+        (wlp (ASG v e) q  = (\s. q (\var. if var=v then e s else s var)))
+         /\
+        (wlp (IFTHENELSE g S1 S2) q = AND (IMP g (wlp S1 q))  (IMP (NOT g) (wlp S2 q)))
+	 /\
+	(wlp (PERM S1 S2) q = AND (wlp S1 q) (wlp S2 q))
+	 /\
+	(wlp (FOR inv init g incr body) q =
+	  if ((q = AND inv (NOT g)) /\ HOARE (SEQ body incr) (AND inv g) inv) then
+	    wlp init inv
+	  else
+	    wlp init (AND (NOT g) q)
+	)
+        ` ;
+(* ========================================================================== 
+   SECTION 3: provides proofs of some basic laws of Hoare triples
+   ========================================================================== *)
+   
+val HOARE_precond_strengthening_thm = prove
+   (--`VALID (IMP p1 p2) /\ HOARE stmt p2 q ==> HOARE stmt p1 q`--,
+    REWRITE_TAC [VALID_def, IMP_def]
+    THEN REWRITE_TAC [HOARE_def]
+    THEN REPEAT STRIP_TAC
+    THEN PROVE_TAC [] ) ;
+
+val HOARE_postcond_weakening_thm = prove
+   (--`VALID (IMP q1 q2) /\ HOARE stmt p q1 ==> HOARE stmt p q2`--,
+    REWRITE_TAC [VALID_def, IMP_def]
+    THEN REWRITE_TAC [HOARE_def]
+    THEN REPEAT STRIP_TAC
+    THEN PROVE_TAC [] ) ;
+    
+val HOARE_seq_thm = prove
+   (--`HOARE S1 p q /\ HOARE S2 q r ==> HOARE (SEQ S1 S2) p r`--,
+    REWRITE_TAC [HOARE_def]
+    THEN REWRITE_TAC [exec_def]
+    THEN PROVE_TAC[]
+   ) ;
+   
+val HOARE_ifthenelse_thm = prove
+   (--`HOARE S1 (AND g p) q /\ HOARE S2 (AND (NOT g) p) q ==> HOARE (IFTHENELSE g S1 S2) p q`--,
+    REWRITE_TAC [HOARE_def]
+    THEN REWRITE_TAC [exec_def, AND_def, NOT_def]
+    THEN BETA_TAC
+    THEN PROVE_TAC[]
+   ) ;
+
+val HOARE_perm_thm = prove
+   (--`HOARE S1 p q /\ HOARE S2 p q ==> HOARE (PERM S1 S2) p q`--,
+    RW_TAC std_ss [HOARE_def, exec_def]
+    THEN PROVE_TAC[]
+   ) ;
+
+(* a tactic to undischarge all assumptions *)
+val UNDISCH_ALL_TAC = EVERY_ASSUM (fn th => UNDISCH_TAC (concl th)) ;
+
+val lemma = prove(--`p ==> q ==> r  = (p /\ q) ==> r`--, PROVE_TAC []) ;
+
+
+(** SOLUTION (b) **)
+val HOARE_composition_thm = prove
+  (--`!S P1 P2 Q1 Q2. (HOARE S P1 Q1 /\ HOARE S P2 Q2) ==> (HOARE S (AND P1 P2) (AND Q1 Q2) /\ HOARE S (OR P1 P2) (OR Q1 Q2))`--,
+    RW_TAC std_ss [HOARE_def, OR_def, AND_def, exec_def]
+    THEN PROVE_TAC []
+  );
+
+(** SOLUTION (c) **)
+val REFINE_def = Define `REFINE S1 S2 = (!P Q. HOARE S1 P Q ==> HOARE S2 P Q)`;
+
+val REFINE_thm = prove
+  (--`!g p S1 S2. (VALID (IMP p g)) ==>  REFINE (SEQ (ASSUME p) S1) (SEQ (ASSUME p) (IFTHENELSE g S1 S2))`--,
+    RW_TAC std_ss [REFINE_def, HOARE_def, exec_def, VALID_def, IMP_def]
+    THEN PROVE_TAC []
+  );
+
+ 
+(* ========================================================================== 
+   SECTION 4:
+   This section proves the soundness of the wlp defined above.
+   Sound here means that any final state that results from executing a GCL 
+   statement Stmt from any state in the pre-condition produced by wlp Stmt q
+   will satisfy q. 
+   ========================================================================== *)
+   
+(* First, here are lemmas showing that wlp is sound for primitive GCL 
+   constructs.  *)
+   
+val SOUND_wlp_skip_thm = prove
+   (--`HOARE SKIP (wlp SKIP q) q`--,
+    REWRITE_TAC [HOARE_def]
+    THEN REWRITE_TAC [wlp_def]
+    THEN REWRITE_TAC [exec_def]
+    THEN BETA_TAC
+    THEN PROVE_TAC []
+   ) ;
+
+val SOUND_wlp_assume_thm = prove
+   (--`HOARE (ASSUME p) (wlp (ASSUME p) q) q`--,
+    REWRITE_TAC [HOARE_def]
+    THEN REWRITE_TAC [wlp_def]
+    THEN REWRITE_TAC [exec_def]
+    THEN BETA_TAC
+    THEN PROVE_TAC []
+   ) ;
+
+val SOUND_wlp_assignment_thm = prove
+   (--`HOARE (ASG v e) (wlp (ASG v e) q) q`--,
+    REWRITE_TAC [HOARE_def]
+    THEN REWRITE_TAC [wlp_def]
+    THEN REWRITE_TAC [exec_def]
+    THEN BETA_TAC
+    THEN REPEAT STRIP_TAC
+    THEN ASM_REWRITE_TAC [] ) ;
+    
+(* Now the main theorem, that wlp is sound over ALL constructs of GCL. As expected,
+   such a proof will involve a structural induction. *)
+val SOUND_wlp_thm = prove
+   (--`(!q. HOARE gcl (wlp gcl q) q)`--,
+    Induct_on `gcl`
+    THENL
+    [ (* the first three cases: skip, assert, assume: *)
+      PROVE_TAC [SOUND_wlp_skip_thm],
+      PROVE_TAC [SOUND_wlp_assume_thm],
+
+      (* the proof for SEQ *)
+      STRIP_TAC
+      THEN MATCH_MP_TAC (GEN_ALL HOARE_seq_thm)
+      THEN REWRITE_TAC [wlp_def]
+      THEN EXISTS_TAC (--`wlp gcl' q`--)
+      THEN ASM_REWRITE_TAC[],
+ 
+      (* assignment *)
+      PROVE_TAC [SOUND_wlp_assignment_thm],
+      
+      (* IFTHENELSE *)
+      REPEAT STRIP_TAC
+      THEN MATCH_MP_TAC (GEN_ALL HOARE_ifthenelse_thm )
+      THEN CONJ_TAC
+      THENL
+      [ MATCH_MP_TAC (GEN_ALL HOARE_precond_strengthening_thm)
+        THEN EXISTS_TAC (--`wlp gcl q`--)
+        THEN ASM_REWRITE_TAC[]
+        THEN REWRITE_TAC [wlp_def]
+        THEN RW_TAC std_ss [VALID_def, AND_def, IMP_def, NOT_def],
+        MATCH_MP_TAC (GEN_ALL HOARE_precond_strengthening_thm)
+        THEN EXISTS_TAC (--`wlp gcl' q`--)
+        THEN ASM_REWRITE_TAC[]
+        THEN REWRITE_TAC [wlp_def]
+        THEN RW_TAC std_ss [VALID_def, AND_def, IMP_def, NOT_def]
+      ],
+
+      (* PERM *)
+      STRIP_TAC
+      THEN MATCH_MP_TAC (GEN_ALL HOARE_perm_thm)
+      THEN RW_TAC std_ss [wlp_def]
+      THEN MATCH_MP_TAC (GEN_ALL HOARE_precond_strengthening_thm)
+      THENL [ EXISTS_TAC (--`wlp gcl q`--), EXISTS_TAC (--`wlp gcl' q`--) ]
+      THEN RW_TAC std_ss [VALID_def, IMP_def, AND_def]
+      THEN PROVE_TAC []
+    ]
+  ) ;
+
+(* Then we can prove this corollary, that allows you to reduce a
+   Hoare triple specification to an ordinart state-predicate validity
+   problem. 
+*)   
+val reduce_thm = prove
+   (--`VALID (IMP p (wlp stmt q)) ==> HOARE stmt p q`--,
+    STRIP_TAC
+    THEN MATCH_MP_TAC (GEN_ALL HOARE_precond_strengthening_thm)
+    THEN EXISTS_TAC (--`wlp stmt q`--)
+    THEN ASM_REWRITE_TAC []
+    THEN REWRITE_TAC [SOUND_wlp_thm]
+   ) ;
+
+
+(* ========================================================================== 
+   SECTION 5: shows how to use the above result to prove the correctness of
+   the previously given example.
+   ========================================================================== *)
+
+val lemma = prove(--`a > b ==> a+1 > b+1`--, COOPER_TAC) ;
+
+val example1_thm = prove
+   (--`HOARE example1 TT (\s. s "x" > s "y")`--,
+    REWRITE_TAC [example1_def]
+    THEN MATCH_MP_TAC (GEN_ALL reduce_thm) 
+    THEN REWRITE_TAC [SEQS_def]
+    THEN REWRITE_TAC [wlp_def]
+    THEN REWRITE_TAC [TT_def]
+    THEN BETA_TAC THEN BETA_TAC (* REPEAT BETA_TAC doesnt terminate! *)
+    THEN (CONV_TAC o DEPTH_CONV) string_EQ_CONV
+    THEN REWRITE_TAC []
+    THEN REWRITE_TAC [VALID_def, IMP_def]
+    THEN BETA_TAC 
+    THEN PROVE_TAC [lemma]
+   ) ;
+
+(** SOLUTION (a) **)
+val min_def = Define `min = IFTHENELSE (\s. s "x" > s "y") (ASG "x" (\s. s "y")) val`;
+
+SKIP min_thm = prove
+  (--`HOARE min (\s. (s "x" = X) /\ (s "y" = Y)) (\s. ((s "x" = X) \/ (s "x" = Y)) /\ (s "x" <= X) /\ (s "x" <= Y))`--,
+    REWRITE_TAC [min_def, HOARE_def, exec_def]
+    THEN NTAC 2 (BETA_TAC THEN RW_TAC std_ss [])
+    THEN COOPER_TAC
+  );

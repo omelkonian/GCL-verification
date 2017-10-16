@@ -1,0 +1,254 @@
+(*libraries*)
+load "intLib";
+open intLib;
+load "stringLib";
+open stringLib;
+load "stringSimps";
+open stringSimps;
+
+Hol_datatype
+    `GCL = SKIP
+         | ASSUME of 'pred
+         | SEQ    of GCL => GCL
+         | ASG    of string => 'expr
+         | ITE    of 'pred => GCL => GCL
+	 | WHILE  of 'pred => 'pred => GCL
+    `;
+
+val TT_def = Define `TT = (\s. T)`;
+val NOT_def = Define `NOT g = (\s. ~g s)`;
+val AND_def = Define `AND a b = (\s. a s /\ b s)`;
+val OR_def = Define `OR a b = (\s. a s \/ b s)`;
+val IMP_def = Define `IMP a b = (\s. a s ==> b s)`;
+
+val SEQS_def = Define
+    `(SEQS [] = SKIP) /\ (SEQS (S1::rest) = SEQ S1 (SEQS rest))`;
+
+val VALID_def = Define `VALID p = (!s. p s)`;
+
+val iter_def = Define
+    `(iter g body 0 s t = ~g s /\ (t=s))
+      /\
+     (iter g body (SUC k) s t = (g s /\ (?s'. body s s' /\ iter g body k s' t)))
+    `;
+
+val exec_def = Define
+    `(exec SKIP s t = (s = t))
+      /\
+     (exec (ASSUME p) s t = p s /\ (s=t))
+      /\
+     (exec (SEQ S1 S2) s u = (?t. exec S1 s t /\ exec S2 t u))
+      /\
+     (exec (ASG v e) s t = (t = (\var. if var=v then e s else s var)))
+      /\
+     (exec (ITE g S1 S2) s t = ((g s /\ exec S1 s t) \/ ((~ (g s)) /\ exec S2 s t)))
+      /\
+     (exec (WHILE inv g body) s t = ?k. iter g (exec body) k s t)
+    `;
+
+val HOARE_def = Define
+    `HOARE gcl p q = (!s t. p s /\ exec gcl s t ==> q t)`;
+
+val HOARE_loop_thm1 = prove
+    (--`!inv g body. HOARE (WHILE inv g body) (AND (NOT g) q) q`--,
+     REWRITE_TAC [HOARE_def, AND_def, NOT_def, exec_def, iter_def]
+     THEN BETA_TAC
+     THEN REPEAT STRIP_TAC
+     THEN Induct_on `k`
+     THEN REWRITE_TAC [iter_def]
+     THEN PROVE_TAC []
+    );
+
+val HOARE_loop_lemma1 = prove
+    (--`!inv g body.
+    	     HOARE body (AND inv g) inv ==> HOARE (WHILE inv g body) inv (AND inv (NOT g))
+    `--,    
+     REWRITE_TAC [HOARE_def, AND_def, NOT_def, exec_def, iter_def]
+     THEN BETA_TAC
+     THEN NTAC 7 STRIP_TAC
+     THEN NTAC 2 (FIRST_ASSUM (UNDISCH_TAC o concl))
+     THEN SPEC_TAC (--`s : string -> 'a`--, --`s : string -> 'a`--)
+     THEN Induct_on `k`
+     THENL
+     [ (* Base *)
+       REWRITE_TAC [iter_def]
+       THEN PROVE_TAC []
+     , (* Step *)
+       REWRITE_TAC [iter_def]
+       THEN NTAC 3 STRIP_TAC
+       THEN PROVE_TAC []
+     ]
+    );
+
+val HOARE_loop_thm2 = prove
+    (--`!P Q inv g body.
+    	   VALID (IMP P inv)
+	    /\
+    	   HOARE body (AND g inv) inv
+	    /\
+	   VALID (IMP (AND inv (NOT g)) Q)
+	    ==> HOARE (WHILE inv g body) P Q
+    `--,
+     RW_TAC std_ss [HOARE_loop_lemma1, HOARE_def, VALID_def, IMP_def, AND_def, NOT_def, exec_def, iter_def]
+     THEN FIRST_ASSUM (UNDISCH_TAC o concl)
+     THEN `inv' s` by (PROVE_TAC [])
+     THEN FIRST_ASSUM (UNDISCH_TAC o concl)
+     THEN SPEC_TAC (--`s : string -> 'a`--, --`s : string -> 'a`--)
+     THEN SPEC_TAC (--`t : string -> 'a`--, --`t : string -> 'a`--)
+     THEN Induct_on `k`
+     THEN RW_TAC std_ss [iter_def] THEN PROVE_TAC []
+    );
+
+val wlp_def = Define
+    `(wlp SKIP q = q)
+      /\
+     (wlp (ASSUME p) q = (\s. p s ==> q s))
+      /\
+     (wlp (SEQ S1 S2) q = wlp S1 (wlp S2 q))
+      /\
+     (wlp (ASG v e) q = (\s. q (\var. if var = v then e s else s var)))
+      /\
+     (wlp (ITE g S1 S2) q = (\s. (g s /\ wlp S1 q s) \/ (~ g s /\  wlp S2 q s)))
+      /\
+     (wlp (WHILE inv g body) q =
+       if ((q = AND inv (NOT g)) /\ HOARE body (AND inv g) inv) then
+       	  inv
+       else (AND (NOT g) q))
+    `;
+
+val program_1 = --`SEQS [
+    ASSUME (x > 0);
+    ASG "x" (x + 1);
+    ASG "x" (x + 2)
+]`--;
+
+val program_2 = --`SEQS [
+    ASSUME (\s. s "x" > 0);
+    ASG "x" (\s. s "x" + 1);
+    ASG "x" (\s. s "x" + 2)
+]`--;
+
+val HOARE_precond_strengthening_thm = prove
+    (--`VALID (IMP p1 p2) /\ HOARE stmt p2 q ==> HOARE stmt p1 q`--,
+    REWRITE_TAC [VALID_def, IMP_def, HOARE_def]
+    THEN REPEAT STRIP_TAC
+    THEN PROVE_TAC []);
+
+val HOARE_postcond_weakening_thm = prove
+    (--`VALID (IMP q1 q2) /\ HOARE stmt p q1 ==> HOARE stmt p q2`--,
+    REWRITE_TAC [VALID_def, IMP_def, HOARE_def]
+    THEN REPEAT STRIP_TAC
+    THEN PROVE_TAC []);
+
+val SOUND_wlp_skip_thm = prove
+    (--`HOARE SKIP (wlp SKIP q) q`--,
+     REWRITE_TAC [HOARE_def, wlp_def, exec_def]
+     THEN PROVE_TAC  []
+    );
+
+val SOUND_wlp_assume_thm = prove
+    (--`HOARE (ASSUME p) (wlp (ASSUME p) q) q`--,
+     REWRITE_TAC [HOARE_def, wlp_def, exec_def]
+     THEN PROVE_TAC  []
+    );
+
+val SOUND_wlp_asg_thm = prove
+    (--`HOARE (ASG v e) (wlp (ASG v e) q) q`--,
+     REWRITE_TAC [HOARE_def, wlp_def, exec_def]
+     THEN BETA_TAC
+     THEN REPEAT STRIP_TAC
+     THEN ASM_REWRITE_TAC []
+    );
+
+val HOARE_seq_lemma = prove
+    (--`HOARE S1 p q /\ HOARE S2 q r ==> HOARE (SEQ S1 S2) p r`--,
+     REWRITE_TAC [HOARE_def, wlp_def, exec_def]
+     THEN PROVE_TAC []
+    );
+
+val HOARE_ite_lemma = prove
+    (--`HOARE S1 (AND g p) q /\ HOARE S2 (AND (NOT g) p) q ==> HOARE (ITE g S1 S2) p q`--,
+     REWRITE_TAC [HOARE_def, wlp_def, exec_def, OR_def, AND_def, NOT_def]
+     THEN BETA_TAC
+     THEN REPEAT STRIP_TAC
+     THEN PROVE_TAC []
+    );
+
+val SOUND_wlp_thm = prove
+    (--`(!q. HOARE gcl (wlp gcl q) q)`--,
+     Induct_on `gcl`
+     THENL
+     [ (* SKIP *)
+       PROVE_TAC [SOUND_wlp_skip_thm]
+     , (* ASSUME *)
+       PROVE_TAC [SOUND_wlp_assume_thm]
+     , (* SEQ *)
+       STRIP_TAC
+       THEN MATCH_MP_TAC (GEN_ALL HOARE_seq_lemma)
+       THEN REWRITE_TAC [wlp_def]
+       THEN EXISTS_TAC (--`wlp gcl' q`--)
+       THEN ASM_REWRITE_TAC []
+     , (* ASG *)
+       PROVE_TAC [SOUND_wlp_asg_thm]
+     , (* ITE *)
+       REPEAT STRIP_TAC
+       THEN MATCH_MP_TAC (GEN_ALL HOARE_ite_lemma)
+       THEN CONJ_TAC
+       THEN MATCH_MP_TAC (GEN_ALL HOARE_precond_strengthening_thm)
+       THENL
+       [ EXISTS_TAC (--`wlp gcl q`--),
+         EXISTS_TAC (--`wlp gcl' q`--)
+       ]
+       THEN REWRITE_TAC [VALID_def, IMP_def, AND_def, OR_def, NOT_def, wlp_def]
+       THEN PROVE_TAC []
+     , (* WHILE *)
+       REWRITE_TAC [wlp_def]
+       THEN REPEAT STRIP_TAC
+       THEN RW_TAC std_ss [HOARE_loop_lemma1, HOARE_loop_thm1]
+     ]
+    );
+
+val reduce_thm = prove
+   (--`VALID (IMP p (wlp stmt q)) ==> HOARE stmt p q`--,
+       STRIP_TAC
+       THEN MATCH_MP_TAC (GEN_ALL HOARE_precond_strengthening_thm)
+       THEN EXISTS_TAC (--`wlp stmt q`--)
+       THEN ASM_REWRITE_TAC []
+       THEN REWRITE_TAC [SOUND_wlp_thm]
+   );
+
+val example1 = --`
+    SEQS [
+        ASSUME (\s. s "x" > s "y");
+        ASG "x" (\s. s "x" + 1);
+        ASG "y" (\s. s "y" + 1);
+    ]
+    `--;
+
+val example1_thm = prove
+    (--`HOARE ^example1 TT (\s. s "x" > s "y")`--,
+     MATCH_MP_TAC (GEN_ALL reduce_thm)
+     THEN REWRITE_TAC [TT_def, VALID_def, IMP_def, SEQS_def, wlp_def]
+     THEN STRIP_TAC
+     THEN BETA_TAC
+     THEN BETA_TAC
+     THEN (CONV_TAC o DEPTH_CONV) string_EQ_CONV
+     THEN COOPER_TAC
+    );
+
+val ite_example = --`
+    SEQS [
+        ASSUME (NOT (\s. s "x" = s "y"));
+        ITE (\s. s "y" > s "x")
+            (ASG "y" (\s. s "y" - s "x"))
+            (ASG "x" (\s. s "x" - s "y"))
+    ]
+    `--;
+
+val ite_example_thm = prove
+  (--`HOARE ^ite_example (\s. s "x" > 0 /\ s "y" > 0) (\s. s "x" + s "y" > 0)`--,
+      RW_TAC arith_ss [SEQS_def, NOT_def, HOARE_def, exec_def]
+      THEN RW_TAC std_ss []
+      THEN (PROVE_TAC [] ORELSE COOPER_TAC)
+  );
+
