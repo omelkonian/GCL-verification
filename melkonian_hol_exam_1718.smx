@@ -1,3 +1,4 @@
+
 (* turning off unicode *)
 (* set_trace "Unicode" 0; *)
 
@@ -178,10 +179,10 @@ val HOARE_composition_thm = prove
   );
 
 (* <<< (c): Refinement >>> *)
-val REFINE_def = Define `REFINE S1 S2 = (!P Q. HOARE S1 P Q ==> HOARE S2 P Q)`;
+val REFINE_def = Define `REFINE S1 S2 = (!P Q. HOARE S2 P Q ==> HOARE S1 P Q)`;
 
 val REFINE_thm = prove
-  (--`!g p S1 S2. (VALID (IMP p g)) ==>  REFINE (SEQ (ASSUME p) S1) (SEQ (ASSUME p) (IFTHENELSE g S1 S2))`--,
+  (--`!g p S1 S2. (VALID (IMP p g)) ==> REFINE (SEQ (ASSUME p) S1) (SEQ (ASSUME p) (IFTHENELSE g S1 S2))`--,
     RW_TAC std_ss [REFINE_def, HOARE_def, exec_def, VALID_def, IMP_def]
     THEN PROVE_TAC []
   );
